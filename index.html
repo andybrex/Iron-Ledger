@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Iron Ledger" />
+<meta name="theme-color" content="#0F1729" />
+<title>Iron Ledger</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>html,body,#root{height:100%;margin:0;background:#0F1729}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useRef } = React;
+
+const STORE_KEY = "workout-tracker-v3";
+function loadState() { try { const v = localStorage.getItem(STORE_KEY); return v ? JSON.parse(v) : null; } catch { return null; } }
+function saveState(data) { try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch {} }
+
+const C = { ink: "#0F1729", panel: "#18223B", edge: "#2A3656", chalk: "#EAF0FF", muted: "#8493B8", amber: "#F6A623", teal: "#38E1C6" };
+const PALETTE = [C.teal, C.amber, "#9D7BFF", "#FF6B9D", "#7BE0A0", "#5BC0EB"];
+const display = "'Oswald','Arial Narrow',sans-serif";
+const body = "'Inter',system-ui,-apple-system,sans-serif";
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const TODAY = DAYS[(new Date().getDay() + 6) % 7];
+let idSeed = 1;
+const newId = () => `id${idSeed++}_${Math.random().toString(36).slice(2, 7)}`;
+const mm = (s) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
+const shortDate = (t) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+function nextTarget(ex, unit) {
+  const low = Number(ex.repLow) || ex.reps, high = Number(ex.repHigh) || ex.reps, inc = Number(ex.increment) || 2.5;
+  if (ex.reps >= high) return { weight: ex.weight + inc, reps: low, why: `Top of your ${low}–${high} range — add ${inc}${unit}, reset to ${low} reps.` };
+  return { weight: ex.weight, reps: ex.reps + 1, why: `Add one rep (aim ${ex.reps + 1}). Hit ${high} on every round before adding weight.` };
+}
+
+function buildSteps(w) {
+  const steps = [];
+  (w.blocks || []).forEach((b) => { for (let r = 1; r <= (b.rounds || 1); r++) { (b.exercises || []).forEach((ex) => {
+    steps.push({ type: "exercise", exId: ex.id, name: ex.name, round: r, totalRounds: b.rounds, reps: ex.reps, weight: ex.weight, repLow: ex.repLow, repHigh: ex.repHigh, increment: ex.increment });
+    steps.push({ type: "rest", restSec: ex.restSec, afterExId: ex.id, afterName: ex.name, afterRound: r, plannedReps: ex.reps }); }); } });
+  if (steps.length && steps[steps.length - 1].type === "rest") steps.pop();
+  return steps;
+}
+
+function App() {
+  const [workouts, setWorkouts] = useState([]);
+  const [unit, setUnit] = useState("kg");
+  const [openId, setOpenId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => { (async () => { const s = await loadState(); if (s) { setWorkouts(s.workouts || []); setUnit(s.unit || "kg"); } setLoaded(true); })(); }, []);
+  useEffect(() => { if (loaded) saveState({ workouts, unit }); }, [workouts, unit, loaded]);
+
+  const mut = (wid, fn) => setWorkouts((ws) => ws.map((w) => (w.id === wid ? fn(w) : w)));
+  const addWorkout = (name, days) => setWorkouts((w) => [...w, { id: newId(), name, days, blocks: [], sessions: [] }]);
+  const removeWorkout = (id) => setWorkouts((w) => w.filter((x) => x.id !== id));
+  const toggleDay = (wid, d) => mut(wid, (w) => ({ ...w, days: w.days.includes(d) ? w.days.filter((x) => x !== d) : [...w.days, d] }));
+  const addBlock = (wid) => mut(wid, (w) => ({ ...w, blocks: [...w.blocks, { id: newId(), label: "", rounds: 3, exercises: [] }] }));
+  const removeBlock = (wid, bid) => mut(wid, (w) => ({ ...w, blocks: w.blocks.filter((b) => b.id !== bid) }));
+  const patchBlock = (wid, bid, p) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => (b.id === bid ? { ...b, ...p } : b)) }));
+  const moveBlock = (wid, idx, dir) => mut(wid, (w) => { const a = [...w.blocks]; const j = idx + dir; if (j < 0 || j >= a.length) return w; [a[idx], a[j]] = [a[j], a[idx]]; return { ...w, blocks: a }; });
+  const addExercise = (wid, bid, ex) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => (b.id === bid ? { ...b, exercises: [...b.exercises, { id: newId(), ...ex }] } : b)) }));
+  const removeExercise = (wid, bid, eid) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => (b.id === bid ? { ...b, exercises: b.exercises.filter((e) => e.id !== eid) } : b)) }));
+  const patchExercise = (wid, bid, eid, p) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => (b.id === bid ? { ...b, exercises: b.exercises.map((e) => (e.id === eid ? { ...e, ...p } : e)) } : b)) }));
+  const moveExercise = (wid, bid, idx, dir) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => { if (b.id !== bid) return b; const a = [...b.exercises]; const j = idx + dir; if (j < 0 || j >= a.length) return b; [a[idx], a[j]] = [a[j], a[idx]]; return { ...b, exercises: a }; }) }));
+  const levelUp = (wid, bid, eid) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => (b.id === bid ? { ...b, exercises: b.exercises.map((e) => { if (e.id !== eid) return e; const t = nextTarget(e, unit); return { ...e, reps: t.reps, weight: t.weight }; }) } : b)) }));
+  const saveSession = (wid, entries) => mut(wid, (w) => ({ ...w, sessions: [...(w.sessions || []), { date: Date.now(), entries }] }));
+  const setExerciseTarget = (wid, eid, patch) => mut(wid, (w) => ({ ...w, blocks: w.blocks.map((b) => ({ ...b, exercises: b.exercises.map((e) => (e.id === eid ? { ...e, ...patch } : e)) })) }));
+  const exerciseCount = (w) => (w.blocks || []).reduce((n, b) => n + b.exercises.length, 0);
+
+  const [player, setPlayer] = useState(null);
+  const [restRemaining, setRestRemaining] = useState(0);
+  const [restRunning, setRestRunning] = useState(true);
+  const [repLog, setRepLog] = useState({});
+  const goNextRef = useRef(() => {});
+  const startWorkout = (w) => { const steps = buildSteps(w); if (!steps.length) return; setRepLog({}); setPlayer({ workoutId: w.id, name: w.name, steps, idx: 0, done: false }); };
+  const closePlayer = () => setPlayer(null);
+  const goNext = () => setPlayer((p) => (!p ? p : p.idx >= p.steps.length - 1 ? { ...p, done: true } : { ...p, idx: p.idx + 1 }));
+  const goPrev = () => setPlayer((p) => (!p || p.idx === 0 ? p : { ...p, idx: p.idx - 1, done: false }));
+  goNextRef.current = goNext;
+  const curStep = player && !player.done ? player.steps[player.idx] : null;
+  useEffect(() => { if (!curStep) return; if (curStep.type === "rest") { setRestRemaining(curStep.restSec); setRestRunning(true); } else setRestRunning(false); }, [player?.idx, player?.done]);
+  useEffect(() => { if (!curStep || curStep.type !== "rest" || !restRunning || restRemaining <= 0) return; const id = setInterval(() => setRestRemaining((r) => (r > 0 ? r - 1 : 0)), 1000); return () => clearInterval(id); }, [player?.idx, restRunning, restRemaining, curStep]);
+  useEffect(() => { if (curStep && curStep.type === "rest" && restRemaining === 0) { const t = setTimeout(() => goNextRef.current(), 350); return () => clearTimeout(t); } }, [restRemaining, curStep]);
+
+  const dueToday = workouts.filter((w) => w.days.includes(TODAY));
+
+  return (
+    <div style={{ background: C.ink, color: C.chalk, fontFamily: body, minHeight: "100vh" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+        @keyframes pulseBar{0%,100%{opacity:.4}50%{opacity:1}}
+        input.numbox::-webkit-outer-spin-button,input.numbox::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+        input.numbox{-moz-appearance:textfield;appearance:textfield}`}</style>
+
+      <div className="mx-auto w-full max-w-2xl px-4 py-6">
+        <div className="flex items-end justify-between mb-1">
+          <h1 style={{ fontFamily: display, fontWeight: 700, letterSpacing: ".04em" }} className="text-3xl uppercase">Iron Ledger</h1>
+          <button onClick={() => setUnit((u) => (u === "kg" ? "lb" : "kg"))} className="text-sm px-3 py-1 rounded-full" style={{ border: `1px solid ${C.edge}`, color: C.muted }}>unit: <b style={{ color: C.chalk }}>{unit}</b></button>
+        </div>
+        <p style={{ color: C.muted }} className="text-sm mb-5">Build blocks, run them, then <b style={{ color: C.amber }}>save to history</b> to track your overload. Today is <b style={{ color: C.amber }}>{TODAY}</b>.</p>
+
+        {dueToday.length > 0 && (<div className="mb-5 p-3 rounded-xl" style={{ background: C.panel, border: `1px solid ${C.edge}` }}><div style={{ color: C.amber, fontFamily: display, letterSpacing: ".08em" }} className="text-xs uppercase mb-1">On deck today</div><div className="text-sm">{dueToday.map((w) => w.name).join("  ·  ")}</div></div>)}
+        {workouts.length === 0 && <p style={{ color: C.muted }} className="text-sm mb-5">No workout days yet. Add your first below.</p>}
+
+        {workouts.map((w) => {
+          const open = openId === w.id;
+          return (
+            <div key={w.id} className="mb-3 rounded-xl overflow-hidden" style={{ background: C.panel, border: `1px solid ${C.edge}` }}>
+              <button onClick={() => setOpenId(open ? null : w.id)} className="w-full text-left p-4 flex items-center justify-between">
+                <div><div style={{ fontFamily: display, fontWeight: 600 }} className="text-xl">{w.name}</div>
+                  <div className="flex gap-1 mt-1">{DAYS.map((d) => (<span key={d} className="text-xs px-1.5 py-0.5 rounded" style={{ color: w.days.includes(d) ? C.ink : C.muted, background: w.days.includes(d) ? C.amber : "transparent", border: `1px solid ${w.days.includes(d) ? C.amber : C.edge}`, fontWeight: d === TODAY ? 700 : 400 }}>{d}</span>))}</div></div>
+                <span style={{ color: C.muted }} className="text-sm">{exerciseCount(w)} exercises {open ? "▲" : "▼"}</span>
+              </button>
+              {open && (
+                <div className="px-4 pb-4">
+                  <button onClick={() => startWorkout(w)} disabled={exerciseCount(w) === 0} className="w-full mb-3 py-3 rounded-lg font-medium" style={{ background: exerciseCount(w) ? C.amber : C.edge, color: exerciseCount(w) ? C.ink : C.muted, fontFamily: display, letterSpacing: ".05em" }}>▶ START WORKOUT</button>
+                  <div className="mb-3"><div style={{ color: C.muted }} className="text-xs mb-1">Repeats on:</div><div className="flex gap-1 flex-wrap">{DAYS.map((d) => (<button key={d} onClick={() => toggleDay(w.id, d)} className="text-xs px-2 py-1 rounded" style={{ color: w.days.includes(d) ? C.ink : C.chalk, background: w.days.includes(d) ? C.amber : "transparent", border: `1px solid ${w.days.includes(d) ? C.amber : C.edge}` }}>{d}</button>))}</div></div>
+                  {w.blocks.map((b, bi) => (<BlockCard key={b.id} block={b} idx={bi} total={w.blocks.length} unit={unit} sessions={w.sessions || []} onMove={(dir) => moveBlock(w.id, bi, dir)} onRemove={() => removeBlock(w.id, b.id)} onPatch={(p) => patchBlock(w.id, b.id, p)} onAddExercise={(ex) => addExercise(w.id, b.id, ex)} onRemoveExercise={(eid) => removeExercise(w.id, b.id, eid)} onPatchExercise={(eid, p) => patchExercise(w.id, b.id, eid, p)} onMoveExercise={(i, dir) => moveExercise(w.id, b.id, i, dir)} onLevelUp={(eid) => levelUp(w.id, b.id, eid)} />))}
+                  <button onClick={() => addBlock(w.id)} className="w-full mt-2 py-2 rounded-lg text-sm" style={{ border: `1px dashed ${C.teal}`, color: C.teal }}>+ Add block</button>
+                  <button onClick={() => removeWorkout(w.id)} style={{ color: C.muted }} className="text-xs mt-3 block">delete this workout day</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <WorkoutForm onAdd={addWorkout} />
+      </div>
+
+      {player && (
+        <div className="fixed inset-0 z-50 flex flex-col" style={{ background: C.ink }}>
+          <div className="flex gap-1 px-3 pt-3">{player.steps.map((s, i) => { const done = i < player.idx || player.done, active = i === player.idx && !player.done; let fill = done ? 100 : 0; if (active && s.type === "rest" && s.restSec > 0) fill = (1 - restRemaining / s.restSec) * 100; const col = s.type === "rest" ? C.amber : C.teal; return (<div key={i} className="flex-1 rounded-full overflow-hidden" style={{ height: 4, background: `${col}33` }}><div style={{ width: `${active && s.type === "exercise" ? 100 : fill}%`, height: "100%", background: col, animation: active && s.type === "exercise" ? "pulseBar 1.2s infinite" : "none", transition: "width .4s linear" }} /></div>); })}</div>
+          <div className="flex items-center justify-between px-4 py-3"><span style={{ color: C.muted, fontFamily: display, letterSpacing: ".08em" }} className="text-sm uppercase">{player.name}</span><button onClick={closePlayer} style={{ color: C.muted }} className="text-2xl leading-none">✕</button></div>
+          {player.done ? (<Summary player={player} repLog={repLog} unit={unit} onSave={(entries) => { saveSession(player.workoutId, entries); closePlayer(); }} onApplyTarget={(eid, patch) => setExerciseTarget(player.workoutId, eid, patch)} onClose={closePlayer} />)
+            : curStep.type === "exercise" ? (
+              <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
+                <div style={{ color: C.teal, fontFamily: display, letterSpacing: ".1em" }} className="text-sm uppercase mb-2">Round {curStep.round} of {curStep.totalRounds}</div>
+                <div style={{ fontFamily: display, fontWeight: 700 }} className="text-5xl uppercase mb-4">{curStep.name}</div>
+                <div style={{ fontFamily: display }} className="text-2xl mb-3"><span style={{ color: C.amber }}>{curStep.reps}</span> reps · <span style={{ color: C.amber }}>{curStep.weight}{unit}</span></div>
+                {curStep.repHigh ? (<div style={{ color: C.teal }} className="text-xs uppercase mb-8" >Target range {curStep.repLow}–{curStep.repHigh} · hit {curStep.repHigh}+ on every set to level up</div>) : <div className="mb-8" />}
+                <button onClick={goNext} className="px-10 py-4 rounded-xl font-medium" style={{ background: C.teal, color: C.ink, fontFamily: display, letterSpacing: ".05em" }}>DONE — REST ▶</button>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
+                <div style={{ color: C.amber, fontFamily: display, letterSpacing: ".1em" }} className="text-sm uppercase mb-1">Rest</div>
+                <div style={{ fontFamily: display, fontWeight: 700, color: C.amber }} className="text-7xl leading-none mb-6">{mm(restRemaining)}</div>
+                <div className="w-full max-w-xs p-3 rounded-xl mb-6" style={{ background: C.panel, border: `1px solid ${C.edge}` }}>
+                  <div style={{ color: C.muted }} className="text-xs mb-2">Reps you did on <b style={{ color: C.chalk }}>{curStep.afterName}</b> (round {curStep.afterRound}) <span style={{ opacity: .7 }}>(optional)</span></div>
+                  <input type="number" placeholder={`${curStep.plannedReps}`} value={repLog[`${curStep.afterExId}:${curStep.afterRound}`] ?? ""} onChange={(e) => setRepLog((m) => ({ ...m, [`${curStep.afterExId}:${curStep.afterRound}`]: e.target.value }))} className="numbox w-full px-3 py-2 rounded-lg text-center" style={{ background: C.ink, border: `1px solid ${C.edge}`, color: C.chalk, fontFamily: display, fontSize: 22 }} />
+                </div>
+                {player.steps[player.idx + 1]?.type === "exercise" && (<div style={{ color: C.muted }} className="text-sm mb-6">Up next: <b style={{ color: C.chalk }}>{player.steps[player.idx + 1].name}</b></div>)}
+                <div className="flex items-center gap-3"><button onClick={() => setRestRunning((r) => !r)} className="px-5 py-3 rounded-lg" style={{ border: `1px solid ${C.edge}`, color: C.chalk }}>{restRunning ? "Pause" : "Resume"}</button><button onClick={goNext} className="px-8 py-3 rounded-lg font-medium" style={{ background: C.amber, color: C.ink, fontFamily: display, letterSpacing: ".05em" }}>SKIP REST ▶</button></div>
+              </div>
+            )}
+          {!player.done && (<div className="flex justify-between px-6 pb-6"><button onClick={goPrev} disabled={player.idx === 0} style={{ color: player.idx === 0 ? C.edge : C.muted }} className="text-sm">‹ Back</button><span style={{ color: C.muted }} className="text-xs">{player.idx + 1} / {player.steps.length}</span><button onClick={goNext} style={{ color: C.muted }} className="text-sm">Skip ›</button></div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrendChart({ sessions, exercises, unit }) {
+  const [metric, setMetric] = useState("volume");
+  const metricVal = (e) => { if (!e) return null; if (metric === "weight") return e.weight; if (metric === "volume") return Math.round(e.weight * (e.totalReps ?? e.reps ?? 0)); if (metric === "e1rm") return Math.round(e.weight * (1 + (e.reps ?? 0) / 30)); return e.weight; };
+  const suffix = metric === "volume" ? "" : unit;
+  const series = exercises.map((ex, i) => ({ name: ex.name, color: PALETTE[i % PALETTE.length], points: sessions.map((s, si) => ({ si, y: metricVal(s.entries?.[ex.id]) })).filter((p) => p.y != null && !isNaN(p.y)) })).filter((s) => s.points.length);
+  const tabs = [["volume", "Volume"], ["weight", "Weight"], ["e1rm", "Est. 1RM"]];
+  const Toggle = (
+    <div className="flex gap-1 mb-2">{tabs.map(([k, label]) => (<button key={k} onClick={() => setMetric(k)} className="text-xs px-2 py-1 rounded" style={{ background: metric === k ? C.teal : "transparent", color: metric === k ? C.ink : C.muted, border: `1px solid ${metric === k ? C.teal : C.edge}` }}>{label}</button>))}</div>
+  );
+  if (!series.length) return (<div>{Toggle}<div style={{ color: C.muted }} className="text-xs py-2">No saved sessions yet — finish a workout and tap “Save to history”.</div></div>);
+  const allY = series.flatMap((s) => s.points.map((p) => p.y));
+  let minY = Math.min(...allY), maxY = Math.max(...allY); if (minY === maxY) { minY = Math.max(0, minY - 2); maxY += 2; }
+  const W = 300, H = 120, padL = 34, padB = 16, padT = 8, padR = 6, n = sessions.length;
+  const xFor = (si) => padL + (n <= 1 ? (W - padL - padR) / 2 : (si / (n - 1)) * (W - padL - padR));
+  const yFor = (y) => padT + (1 - (y - minY) / (maxY - minY)) * (H - padT - padB);
+  return (
+    <div>
+      {Toggle}
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }}>
+        <line x1={padL} y1={yFor(maxY)} x2={W - padR} y2={yFor(maxY)} stroke={C.edge} strokeWidth="1" />
+        <line x1={padL} y1={yFor(minY)} x2={W - padR} y2={yFor(minY)} stroke={C.edge} strokeWidth="1" />
+        <text x="2" y={yFor(maxY) + 3} fill={C.muted} fontSize="8">{maxY}</text>
+        <text x="2" y={yFor(minY) + 3} fill={C.muted} fontSize="8">{minY}</text>
+        {sessions.map((s, si) => (<text key={si} x={xFor(si)} y={H - 4} fill={C.muted} fontSize="7" textAnchor="middle">{shortDate(s.date)}</text>))}
+        {series.map((s, i) => (<g key={i}>
+          <polyline fill="none" stroke={s.color} strokeWidth="2" points={s.points.map((p) => `${xFor(p.si)},${yFor(p.y)}`).join(" ")} />
+          {s.points.map((p, j) => (<circle key={j} cx={xFor(p.si)} cy={yFor(p.y)} r="2.5" fill={s.color} />))}
+        </g>))}
+      </svg>
+      <div className="flex flex-wrap gap-2 mt-1">{series.map((s, i) => (<span key={i} className="text-xs flex items-center gap-1" style={{ color: C.muted }}><span style={{ width: 8, height: 8, borderRadius: 8, background: s.color, display: "inline-block" }} />{s.name} <b style={{ color: C.chalk }}>{s.points[s.points.length - 1].y}{suffix}</b></span>))}</div>
+    </div>
+  );
+}
+
+function BlockCard({ block, idx, total, unit, sessions, onMove, onRemove, onPatch, onAddExercise, onRemoveExercise, onPatchExercise, onMoveExercise, onLevelUp }) {
+  const [showHist, setShowHist] = useState(false);
+  const exIds = new Set(block.exercises.map((e) => e.id));
+  const blockSessions = (sessions || []).filter((s) => Object.keys(s.entries || {}).some((id) => exIds.has(id)));
+  return (
+    <div className="mb-3 p-3 rounded-xl" style={{ background: C.ink, border: `1px solid ${C.edge}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <input value={block.label} onChange={(e) => onPatch({ label: e.target.value })} placeholder={`Block ${idx + 1} (name optional)`} className="bg-transparent text-sm flex-1 mr-2" style={{ color: C.chalk, fontFamily: display, letterSpacing: ".04em", outline: "none" }} />
+        <div className="flex items-center gap-1"><button onClick={() => onMove(-1)} disabled={idx === 0} style={{ color: idx === 0 ? C.edge : C.muted }} className="px-1">↑</button><button onClick={() => onMove(1)} disabled={idx === total - 1} style={{ color: idx === total - 1 ? C.edge : C.muted }} className="px-1">↓</button><button onClick={onRemove} style={{ color: C.muted }} className="px-1 text-xs">✕</button></div>
+      </div>
+      <div className="flex items-center gap-2 mb-3">
+        <span style={{ color: C.muted }} className="text-xs">Rounds</span>
+        <button onClick={() => onPatch({ rounds: Math.max(1, block.rounds - 1) })} className="w-7 h-7 rounded" style={{ border: `1px solid ${C.edge}`, color: C.chalk }}>−</button>
+        <span style={{ fontFamily: display, fontSize: 20, minWidth: 22, textAlign: "center" }}>{block.rounds}</span>
+        <button onClick={() => onPatch({ rounds: block.rounds + 1 })} className="w-7 h-7 rounded" style={{ border: `1px solid ${C.edge}`, color: C.chalk }}>+</button>
+        {block.exercises.length > 1 && <span style={{ color: C.teal }} className="text-xs ml-2">superset · cycles {block.exercises.length}</span>}
+      </div>
+      {block.exercises.map((e, i) => (<ExerciseRow key={e.id} ex={e} idx={i} total={block.exercises.length} unit={unit} onMove={(dir) => onMoveExercise(i, dir)} onRemove={() => onRemoveExercise(e.id)} onPatch={(p) => onPatchExercise(e.id, p)} onLevelUp={() => onLevelUp(e.id)} />))}
+      <AddExerciseForm unit={unit} onAdd={onAddExercise} />
+      {block.exercises.length > 0 && (
+        <div className="mt-3 pt-2" style={{ borderTop: `1px solid ${C.edge}` }}>
+          <button onClick={() => setShowHist((v) => !v)} style={{ color: C.teal }} className="text-xs">{showHist ? "▾ hide history & trend" : "▸ history & trend"} {blockSessions.length ? `(${blockSessions.length})` : ""}</button>
+          {showHist && (<div className="mt-2">
+            <TrendChart sessions={blockSessions} exercises={block.exercises} unit={unit} />
+            {blockSessions.slice(-5).reverse().map((s, i) => (<div key={i} className="text-xs mt-2 flex flex-wrap gap-2" style={{ color: C.muted }}><b style={{ color: C.chalk }}>{shortDate(s.date)}</b>{block.exercises.filter((e) => s.entries?.[e.id]).map((e) => (<span key={e.id}>{e.name}: {s.entries[e.id].weight}{unit}×{s.entries[e.id].reps}</span>))}</div>))}
+          </div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExerciseRow({ ex, idx, total, unit, onMove, onRemove, onPatch, onLevelUp }) {
+  const [showProg, setShowProg] = useState(false);
+  const t = nextTarget(ex, unit);
+  const numIn = (k, w = 54) => (<input type="number" className="numbox" value={ex[k]} onChange={(e) => onPatch({ [k]: Number(e.target.value) })} style={{ width: w, background: C.panel, border: `1px solid ${C.edge}`, color: C.chalk, borderRadius: 6, padding: "3px 6px", fontFamily: display, textAlign: "center" }} />);
+  return (
+    <div className="mb-2 p-2 rounded-lg" style={{ background: C.panel, border: `1px solid ${C.edge}` }}>
+      <div className="flex items-center justify-between"><span style={{ fontFamily: display, fontWeight: 600 }} className="text-base">{ex.name}</span><div className="flex items-center gap-1"><button onClick={() => onMove(-1)} disabled={idx === 0} style={{ color: idx === 0 ? C.edge : C.muted }} className="px-1">↑</button><button onClick={() => onMove(1)} disabled={idx === total - 1} style={{ color: idx === total - 1 ? C.edge : C.muted }} className="px-1">↓</button><button onClick={onRemove} style={{ color: C.muted }} className="px-1 text-xs">✕</button></div></div>
+      <div className="flex items-center gap-3 mt-1 text-xs flex-wrap" style={{ color: C.muted }}>
+        <label className="flex items-center gap-1">reps {numIn("reps", 48)}</label>
+        <label className="flex items-center gap-1">{unit} {numIn("weight", 60)}</label>
+        <label className="flex items-center gap-1">rest(s) {numIn("restSec", 60)}</label>
+        <button onClick={() => setShowProg((v) => !v)} style={{ color: C.teal }}>{showProg ? "hide" : "progression"}</button>
+      </div>
+      {showProg && (<div className="mt-2 p-2 rounded" style={{ border: `1px solid ${C.teal}33`, background: `${C.teal}11` }}>
+        <div className="flex items-center gap-3 text-xs flex-wrap" style={{ color: C.muted }}><label className="flex items-center gap-1">range {numIn("repLow", 42)}–{numIn("repHigh", 42)}</label><label className="flex items-center gap-1">+{unit}/jump {numIn("increment", 52)}</label></div>
+        <div style={{ color: C.teal, fontFamily: display, letterSpacing: ".06em" }} className="text-xs uppercase mt-2">Next → {t.reps} reps @ {t.weight}{unit}</div>
+        <div style={{ color: C.muted }} className="text-xs">{t.why}</div>
+        <button onClick={onLevelUp} className="text-xs px-3 py-1 rounded mt-1" style={{ border: `1px solid ${C.teal}`, color: C.teal }}>I hit it — level up</button>
+      </div>)}
+    </div>
+  );
+}
+
+function Summary({ player, repLog, unit, onSave, onApplyTarget, onClose }) {
+  const [applied, setApplied] = useState({});
+  const entries = {};
+  player.steps.forEach((s) => { if (s.type !== "exercise") return; const logged = Number(repLog[`${s.exId}:${s.round}`]); const cur = entries[s.exId] || { name: s.name, weight: s.weight, planned: s.reps, reps: 0, totalReps: 0, rounds: 0, hasLog: false }; cur.weight = s.weight; cur.planned = s.reps; cur.rounds += 1; const repsThisRound = (!isNaN(logged) && logged > 0) ? logged : s.reps; cur.totalReps += repsThisRound; if (!isNaN(logged) && logged > 0) { cur.reps = Math.max(cur.reps, logged); cur.hasLog = true; } entries[s.exId] = cur; });
+  Object.values(entries).forEach((e) => { if (!e.hasLog) e.reps = e.planned; });
+
+  // performance-based recommendation per exercise (uses the weakest set across rounds)
+  const recs = {};
+  player.steps.forEach((s) => { if (s.type !== "exercise") return; const logged = Number(repLog[`${s.exId}:${s.round}`]); const eff = (!isNaN(logged) && logged > 0) ? logged : s.reps; const cur = recs[s.exId] || { name: s.name, weight: s.weight, reps: s.reps, repLow: s.repLow, repHigh: s.repHigh, increment: s.increment, minEff: Infinity, anyLog: false }; cur.weight = s.weight; cur.reps = s.reps; cur.repLow = s.repLow; cur.repHigh = s.repHigh; cur.increment = s.increment; cur.minEff = Math.min(cur.minEff, eff); if (!isNaN(logged) && logged > 0) cur.anyLog = true; recs[s.exId] = cur; });
+  const recommend = (r) => {
+    const high = Number(r.repHigh) || r.reps, low = Number(r.repLow) || r.reps, inc = Number(r.increment) || 2.5;
+    if (r.minEff >= high) return { color: C.teal, label: `Level up → ${r.weight + inc}${unit}, reset to ${low} reps`, patch: { weight: r.weight + inc, reps: low }, note: `You hit ${high}+ on every set.` };
+    if (r.minEff >= r.reps) { const nr = Math.min(high, r.reps + 1); return { color: C.amber, label: `Aim for ${nr} reps @ ${r.weight}${unit}`, patch: { reps: nr }, note: `Target met — chase ${high} before adding weight.` }; }
+    return { color: C.muted, label: `Repeat ${r.reps} reps @ ${r.weight}${unit}`, patch: { reps: r.reps, weight: r.weight }, note: `Short of target — own this weight first.` };
+  };
+
+  const rows = [];
+  player.steps.forEach((s) => { if (s.type === "exercise") rows.push({ name: s.name, round: s.round, planned: s.reps, done: repLog[`${s.exId}:${s.round}`] }); });
+  const recList = Object.entries(recs).map(([eid, r]) => ({ eid, r, rec: recommend(r) }));
+
+  return (
+    <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div style={{ fontFamily: display, fontWeight: 700, color: C.teal }} className="text-4xl uppercase mb-1">Done.</div>
+      <p style={{ color: C.muted }} className="text-sm mb-4">Workout complete. What you logged:</p>
+      <div className="flex flex-wrap gap-2 mb-5">{rows.map((r, i) => (<span key={i} className="text-sm px-2 py-1 rounded" style={{ background: C.panel, border: `1px solid ${C.edge}`, fontFamily: display }}>{r.name} r{r.round}: <b style={{ color: r.done ? C.teal : C.muted }}>{r.done || "—"}</b><span style={{ color: C.muted }}> / {r.planned}</span></span>))}</div>
+
+      <div style={{ color: C.chalk, fontFamily: display, letterSpacing: ".06em" }} className="text-sm uppercase mb-2">Next session</div>
+      {recList.map(({ eid, r, rec }) => (
+        <div key={eid} className="mb-2 p-3 rounded-lg" style={{ background: C.panel, border: `1px solid ${C.edge}` }}>
+          <div style={{ fontFamily: display, fontWeight: 600 }} className="text-base">{r.name}</div>
+          <div style={{ color: rec.color, fontFamily: display, letterSpacing: ".04em" }} className="text-sm uppercase mt-0.5">{rec.label}</div>
+          <div style={{ color: C.muted }} className="text-xs mt-0.5">{rec.note}{!r.anyLog ? " (from planned reps — log to be exact)" : ""}</div>
+          <button disabled={applied[eid]} onClick={() => { onApplyTarget(eid, rec.patch); setApplied((a) => ({ ...a, [eid]: true })); }} className="text-xs px-3 py-1.5 rounded mt-2" style={{ border: `1px solid ${rec.color}`, color: applied[eid] ? C.muted : rec.color }}>{applied[eid] ? "✓ applied to plan" : "Apply to next workout"}</button>
+        </div>
+      ))}
+
+      <button onClick={() => onSave(entries)} className="w-full mt-3 py-3 rounded-lg font-medium" style={{ background: C.teal, color: C.ink, fontFamily: display, letterSpacing: ".05em" }}>✓ SAVE TO HISTORY</button>
+      <button onClick={onClose} className="w-full mt-2 py-2 rounded-lg text-sm" style={{ border: `1px solid ${C.edge}`, color: C.muted }}>close without saving</button>
+    </div>
+  );
+}
+
+function WorkoutForm({ onAdd }) {
+  const [name, setName] = useState(""); const [days, setDays] = useState([]);
+  const submit = () => { if (!name.trim()) return; onAdd(name.trim(), days); setName(""); setDays([]); };
+  return (
+    <div className="mt-4 p-4 rounded-xl" style={{ background: C.panel, border: `1px dashed ${C.edge}` }}>
+      <div style={{ fontFamily: display, letterSpacing: ".06em" }} className="text-sm uppercase mb-2">Add a workout day</div>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Push Day, Arms" className="w-full mb-2 px-3 py-2 rounded-lg" style={{ background: C.ink, border: `1px solid ${C.edge}`, color: C.chalk }} />
+      <div className="flex gap-1 flex-wrap mb-3">{DAYS.map((d) => (<button key={d} onClick={() => setDays((p) => (p.includes(d) ? p.filter((x) => x !== d) : [...p, d]))} className="text-xs px-2 py-1 rounded" style={{ color: days.includes(d) ? C.ink : C.chalk, background: days.includes(d) ? C.amber : "transparent", border: `1px solid ${days.includes(d) ? C.amber : C.edge}` }}>{d}</button>))}</div>
+      <button onClick={submit} className="px-4 py-2 rounded-lg font-medium" style={{ background: C.teal, color: C.ink }}>Add workout day</button>
+    </div>
+  );
+}
+
+function AddExerciseForm({ onAdd, unit }) {
+  const [f, setF] = useState({ name: "", reps: 8, weight: 20, restSec: 90, repLow: 6, repHigh: 10, increment: 2.5 });
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const submit = () => { if (!f.name.trim()) return; onAdd({ name: f.name.trim(), reps: Number(f.reps), weight: Number(f.weight), restSec: Number(f.restSec), repLow: Number(f.repLow), repHigh: Number(f.repHigh), increment: Number(f.increment) }); setF({ name: "", reps: 8, weight: 20, restSec: 90, repLow: 6, repHigh: 10, increment: 2.5 }); };
+  const numIn = (k, label) => (<label className="text-xs" style={{ color: C.muted }}>{label}<input type="number" value={f[k]} onChange={(e) => set(k, e.target.value)} className="numbox w-full mt-0.5 px-2 py-1.5 rounded" style={{ background: C.ink, border: `1px solid ${C.edge}`, color: C.chalk, fontFamily: display, textAlign: "center" }} /></label>);
+  return (
+    <div className="mt-1 p-2 rounded-lg" style={{ border: `1px dashed ${C.edge}` }}>
+      <div className="flex items-center gap-2">
+        <input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="+ add exercise to this block" className="flex-1 px-3 py-2 rounded-lg text-sm" style={{ background: C.ink, border: `1px solid ${C.edge}`, color: C.chalk }} onKeyDown={(e) => e.key === "Enter" && submit()} />
+        <button onClick={submit} className="px-3 py-2 rounded-lg text-sm font-medium" style={{ background: C.amber, color: C.ink }}>add</button>
+      </div>
+      {f.name.trim() && (
+        <div className="grid grid-cols-3 gap-2 mt-2">
+          {numIn("reps", "reps")}{numIn("weight", unit)}{numIn("restSec", "rest(s)")}
+          {numIn("repLow", "range low")}{numIn("repHigh", "range high")}{numIn("increment", `+${unit}/jump`)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
