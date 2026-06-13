@@ -102,7 +102,7 @@ function App() {
 
       <div className="mx-auto w-full max-w-2xl px-4 py-6">
         <div className="flex items-end justify-between mb-1">
-          <h1 style={{ fontFamily: display, fontWeight: 700, letterSpacing: ".04em" }} className="text-3xl uppercase">Iron Ledger</h1>
+          <h1 style={{ fontFamily: display, fontWeight: 700, letterSpacing: ".04em" }} className="text-3xl uppercase">Workout Tracker</h1>
           <button onClick={() => setUnit((u) => (u === "kg" ? "lb" : "kg"))} className="text-sm px-3 py-1 rounded-full" style={{ border: `1px solid ${C.edge}`, color: C.muted }}>unit: <b style={{ color: C.chalk }}>{unit}</b></button>
         </div>
         <p style={{ color: C.muted }} className="text-sm mb-5">Build blocks, run them, then <b style={{ color: C.amber }}>save to history</b> to track your overload. Today is <b style={{ color: C.amber }}>{TODAY}</b>.</p>
